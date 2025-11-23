@@ -115,7 +115,7 @@ Semantic Layer → Tools (one-direction metadata)
 LLM Reasoner → Output Formatter → Output Guardrails → Slack Output
 ```
 
-![Data Flow](docs/Data_flow.png)
+![Data Flow](docs/Data_Flow.png)
 This diagram shows runtime flow of a single user request from input → cognition → tools → output.
 
 ---

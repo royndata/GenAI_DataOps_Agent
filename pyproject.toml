@@ -23,6 +23,7 @@ python-dotenv = "^1.0.0"
 pandasai-sql = "^0.1.7"
 slack-bolt = "^1.27.0"
 slack-sdk = "^3.39.0"
+structlog = "^25.5.0"
 
 
 [tool.poetry.group.dev.dependencies]
