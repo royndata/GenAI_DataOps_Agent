@@ -1,10 +1,12 @@
 [tool.poetry]
-name = "pandasai-introduction"
+name = "genai-dataops-agent"
 version = "0.1.0"
-description = "PandasAI + Semantic Layer exploration for Future Proof Data Science Bootcamp"
-authors = ["Future Proof Data Science"]
+package-mode = true  # Change from false to true
 readme = "README.md"
-package-mode = false
+packages = [
+    { include = "agent", from = "src" }
+]
+
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
