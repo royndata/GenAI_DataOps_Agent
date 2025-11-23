@@ -1,0 +1,39 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Git
+.git/
+.gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter notebooks
+*.ipynb
+
+# PandasAI exports
+datasets/
+exports/
+pandasai.log
+
+# Slack logs (if any future)
+logs/
+
+# Do not include env files in Docker
+.env
+*.env
+
+# VSCode / IDE settings
+.vscode/
+.idea/
+*.swp
+*~

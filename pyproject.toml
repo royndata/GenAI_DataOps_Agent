@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "pandasai-introduction"
+version = "0.1.0"
+description = "PandasAI + Semantic Layer exploration for Future Proof Data Science Bootcamp"
+authors = ["Future Proof Data Science"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.12"
+pandas = "^2.0.3"
+numpy = "^1.24.3"
+sqlalchemy = "^2.0.0"
+psycopg2-binary = "^2.9.0"
+pyyaml = "^6.0.0"
+jupyter = "^1.0.0"
+ipykernel = "^6.0.0"
+matplotlib = "^3.7.0"
+seaborn = "^0.12.0"
+pandasai = "^3.0.0"
+pandasai-litellm = "^0.0.1"
+python-dotenv = "^1.0.0"
+pandasai-sql = "^0.1.7"
+
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.6.5"
+black = "^24.8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
