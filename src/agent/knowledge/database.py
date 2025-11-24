@@ -8,6 +8,8 @@ from agent.logging_config import logger
 from agent.config import Settings
 from tenacity import retry, stop_after_attempt, wait_exponential
 from typing import Optional, List, Tuple
+from typing import Union
+from sqlalchemy import text, TextClause
 
 # Read secrets manager flag from environment
 USE_SECRETS_MANAGER = os.getenv("USE_SECRETS_MANAGER", "false").lower() == "true"
@@ -114,19 +116,24 @@ class Database:
             logger.error("database_connection_failed", error=str(e))
             return False
 
-    def run_query(self, query: str) -> List[Tuple]:
+    def run_query(self, query: Union[str, TextClause]) -> List[Tuple]:
         """
         Execute a query in a safe transaction.
+        Accepts either a string or SQLAlchemy TextClause object.
         Returns list of row tuples.
         """
         with self.SessionLocal() as session:
             try:
-                result = session.execute(text(query))
+                # If it's already a TextClause, use it directly; otherwise wrap in text()
+                if isinstance(query, TextClause):
+                    result = session.execute(query)
+                else:
+                    result = session.execute(text(query))
                 session.commit()
                 return result.fetchall()
             except SQLAlchemyError as e:
                 session.rollback()
-                logger.error("query_execution_failed", error=str(e), query=query)
+                logger.error("query_execution_failed", error=str(e), query=str(query)[:200])
                 raise
 
     def run_transaction(self, queries: List[str]) -> None:

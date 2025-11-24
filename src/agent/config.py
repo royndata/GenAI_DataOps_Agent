@@ -1,88 +1,73 @@
 # src/agent/config.py
 
 import os
-from dataclasses import dataclass
+from typing import Optional
 from dotenv import load_dotenv
 
-# Load .env globally
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+
+# Load .env automatically
 load_dotenv()
 
 
-@dataclass
-class Settings:
+class Settings(BaseSettings):
     """
-    Centralized configuration for the GenAI DataOps Agent.
-    Only one DB mode is active at runtime:
-    - db_connection_string (single string)
-    OR
-    - modular DB fields (db_user, db_pass, db_host, db_port, db_name)
+    Central configuration for the GenAI DataOps Agent.
+    Uses pydantic-settings (Pydantic v2) to load environment variables safely.
     """
 
-    openai_api_key: str
-    slack_bot_token: str
-    slack_signing_secret: str
+    # --- Required API keys ---
+    openai_api_key: str = Field(..., env="OPENAI_API_KEY")
+    slack_bot_token: str = Field(..., env="SLACK_BOT_TOKEN")
+    slack_signing_secret: str = Field(..., env="SLACK_SIGNING_SECRET")
+    slack_app_token: str = Field(..., env="SLACK_APP_TOKEN")  # Needed for Socket Mode
 
-    # DB Option A
-    db_connection_string: str | None = None
+    # --- DB Option A: full connection string ---
+    db_connection_string: Optional[str] = Field(None, env="DB_CONNECTION_STRING")
 
-    # DB Option B
-    db_user: str | None = None
-    db_pass: str | None = None
-    db_host: str | None = None
-    db_port: str | None = None
-    db_name: str | None = None
+    # --- DB Option B: modular DB fields ---
+    db_user: Optional[str] = Field(None, env="DB_USER")
+    db_pass: Optional[str] = Field(None, env="DB_PASS")
+    db_host: Optional[str] = Field(None, env="DB_HOST")
+    db_port: Optional[str] = Field(None, env="DB_PORT")
+    db_name: Optional[str] = Field(None, env="DB_NAME")
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
 
 def load_settings() -> Settings:
     """
     Validates environment variables and returns a Settings object.
+    Ensures DB config is valid before returning.
     """
 
-    # Required non-DB variables
-    required = [
-        "OPENAI_API_KEY",
-        "SLACK_BOT_TOKEN",
-        "SLACK_SIGNING_SECRET",
-    ]
-
+    # Validate required env variables
+    required = ["OPENAI_API_KEY", "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "SLACK_APP_TOKEN"]
     missing = [var for var in required if not os.getenv(var)]
+
     if missing:
         raise EnvironmentError(f"Missing environment variables: {missing}")
 
-    # DB mode detection
+    # Determine DB mode
     conn_str = os.getenv("DB_CONNECTION_STRING")
-    modular_user = os.getenv("DB_USER")
-    modular_pass = os.getenv("DB_PASS")
-    modular_host = os.getenv("DB_HOST")
-    modular_port = os.getenv("DB_PORT")
-    modular_name = os.getenv("DB_NAME")
 
-    modular_ok = all([modular_user, modular_pass, modular_host, modular_port, modular_name])
+    modular_ok = all([
+        os.getenv("DB_USER"),
+        os.getenv("DB_PASS"),
+        os.getenv("DB_HOST"),
+        os.getenv("DB_PORT"),
+        os.getenv("DB_NAME"),
+    ])
 
     if not (conn_str or modular_ok):
         raise EnvironmentError(
             "Database config invalid. Provide DB_CONNECTION_STRING OR all modular DB_* variables."
         )
 
-    # Return clean, explicit DB config
-    if conn_str:
-        return Settings(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            slack_bot_token=os.getenv("SLACK_BOT_TOKEN"),
-            slack_signing_secret=os.getenv("SLACK_SIGNING_SECRET"),
-            db_connection_string=conn_str,
-            # modular fields remain None
-        )
-
-    # Modular mode
-    return Settings(
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        slack_bot_token=os.getenv("SLACK_BOT_TOKEN"),
-        slack_signing_secret=os.getenv("SLACK_SIGNING_SECRET"),
-        db_connection_string=None,
-        db_user=modular_user,
-        db_pass=modular_pass,
-        db_host=modular_host,
-        db_port=modular_port,
-        db_name=modular_name,
-    )
+    # Instantiate Settings
+    return Settings()

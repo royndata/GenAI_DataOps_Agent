@@ -1,12 +1,13 @@
 # src/agent/knowledge/dataset_loader.py
 
+import os
 import pandas as pd
 from pathlib import Path
 from agent.logging_config import logger
 from typing import Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-DATA_DIR = Path("datasets")  # Relative to project root
+DATA_DIR = Path(os.getenv("DATASET_DIR", "datasets"))
 SUPPORTED_EXTS = {".csv", ".xlsx", ".xls", ".parquet", ".json"}
 
 
