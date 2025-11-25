@@ -1,0 +1,225 @@
+# src/agent/knowledge/semantic_layer.yaml
+
+# ============================================================================
+# Semantic Layer - Dynamic Metric Patterns & Routing Metadata
+# ============================================================================
+# Purpose: Defines business metric patterns that work with any database schema.
+#          Uses pattern matching to map concepts to actual tables/columns.
+#
+# Structure:
+#   - metric_patterns: Reusable metric definitions with patterns
+#   - dataset_patterns: Dataset filename patterns for PandasAI
+#   - routing_hints: Keywords for router tool selection
+#   - validation: Query validation constraints
+# ============================================================================
+
+version: "1.0.0"
+last_updated: "2024-01-01"
+
+# ----------------------------------------------------------------------------
+# METRIC PATTERNS
+# ----------------------------------------------------------------------------
+# Define metric concepts with patterns that match any database schema.
+# Schema discovery will find actual tables/columns matching these patterns.
+# ----------------------------------------------------------------------------
+
+metric_patterns:
+  revenue:
+    name: "Revenue"
+    description: "Total revenue from sales/transactions"
+    # Pattern matching: finds tables with these keywords
+    table_patterns:
+      - "sales"
+      - "transactions"
+      - "orders"
+      - "payments"
+    # Column patterns: finds columns with these names
+    column_patterns:
+      - "amount"
+      - "price"
+      - "revenue"
+      - "total"
+      - "value"
+    aggregation: "SUM"
+    requires_date_filter: true
+    routing_hint: "sql"
+    keywords: ["revenue", "sales", "income", "money", "earnings"]
+    sql_template: "SELECT SUM({column}) as revenue FROM {table} WHERE {date_filter}"
+
+  daily_revenue:
+    name: "Daily Revenue"
+    description: "Revenue aggregated by day"
+    table_patterns:
+      - "sales"
+      - "transactions"
+      - "orders"
+    column_patterns:
+      - "amount"
+      - "price"
+      - "revenue"
+    date_column_patterns:
+      - "created_at"
+      - "date"
+      - "timestamp"
+      - "order_date"
+    aggregation: "SUM"
+    group_by: "DATE({date_column})"
+    requires_date_filter: true
+    routing_hint: "sql"
+    keywords: ["daily revenue", "revenue by day", "daily sales"]
+    sql_template: "SELECT DATE({date_column}) as date, SUM({column}) as revenue FROM {table} WHERE {date_filter} GROUP BY DATE({date_column}) ORDER BY date DESC"
+
+  active_users:
+    name: "Active Users"
+    description: "Count of active/unique users"
+    table_patterns:
+      - "user_activity"
+      - "users"
+      - "sessions"
+      - "events"
+    column_patterns:
+      - "user_id"
+      - "user"
+      - "account_id"
+      - "customer_id"
+    aggregation: "COUNT DISTINCT"
+    requires_date_filter: true
+    routing_hint: "sql"
+    keywords: ["active users", "dau", "daily active users", "users", "unique users"]
+    sql_template: "SELECT COUNT(DISTINCT {column}) as active_users FROM {table} WHERE {date_filter}"
+
+  total_orders:
+    name: "Total Orders"
+    description: "Count of all orders"
+    table_patterns:
+      - "orders"
+      - "purchases"
+      - "transactions"
+    column_patterns:
+      - "*"
+      - "order_id"
+      - "id"
+    aggregation: "COUNT"
+    requires_date_filter: true
+    routing_hint: "sql"
+    keywords: ["orders", "order count", "total orders"]
+    sql_template: "SELECT COUNT(*) as total_orders FROM {table} WHERE {date_filter}"
+
+  average_order_value:
+    name: "Average Order Value"
+    description: "Average value per order"
+    table_patterns:
+      - "orders"
+      - "purchases"
+    column_patterns:
+      - "total_amount"
+      - "amount"
+      - "price"
+      - "value"
+    aggregation: "AVG"
+    requires_date_filter: true
+    routing_hint: "sql"
+    keywords: ["aov", "average order", "order value", "avg order"]
+    sql_template: "SELECT AVG({column}) as avg_order_value FROM {table} WHERE {date_filter}"
+
+# ----------------------------------------------------------------------------
+# DATASET PATTERNS
+# ----------------------------------------------------------------------------
+# Filename patterns for PandasAI dataset discovery.
+# ----------------------------------------------------------------------------
+
+dataset_patterns:
+  sales_data:
+    filename_patterns:
+      - "*sales*.csv"
+      - "*transactions*.csv"
+      - "*orders*.csv"
+    description: "Sales/transaction data"
+    routing_hint: "pandasai"
+    keywords: ["sales", "transactions", "revenue data"]
+    chart_suggestions: ["bar", "line", "histogram"]
+
+  user_data:
+    filename_patterns:
+      - "*users*.csv"
+      - "*customers*.csv"
+      - "*profiles*.csv"
+    description: "User/customer data"
+    routing_hint: "pandasai"
+    keywords: ["users", "user data", "profiles", "customers"]
+    chart_suggestions: ["bar", "pie", "scatter"]
+
+  product_data:
+    filename_patterns:
+      - "*products*.csv"
+      - "*inventory*.csv"
+      - "*catalog*.csv"
+    description: "Product/inventory data"
+    routing_hint: "pandasai"
+    keywords: ["products", "inventory", "catalog"]
+    chart_suggestions: ["bar", "pie"]
+
+# ----------------------------------------------------------------------------
+# ROUTING HINTS
+# ----------------------------------------------------------------------------
+# Keywords that help router decide which tool to use.
+# ----------------------------------------------------------------------------
+
+routing_hints:
+  sql_keywords:
+    - "select"
+    - "query"
+    - "count"
+    - "sum"
+    - "revenue"
+    - "orders"
+    - "users"
+    - "metric"
+    - "kpi"
+    - "last 30 days"
+    - "this month"
+    - "yesterday"
+    
+  pandasai_keywords:
+    - "analyze"
+    - "plot"
+    - "chart"
+    - "graph"
+    - "trend"
+    - "correlation"
+    - "distribution"
+    - "summarize"
+    - "explore"
+    - "visualize"
+    - "compare"
+    - "pattern"
+
+  dataset_info_keywords:
+    - "info"
+    - "metadata"
+    - "columns"
+    - "schema"
+    - "structure"
+    - "describe"
+
+# ----------------------------------------------------------------------------
+# VALIDATION RULES
+# ----------------------------------------------------------------------------
+# Constraints for input guardrails and query validation.
+# ----------------------------------------------------------------------------
+
+validation:
+  max_date_range_days: 365
+  min_date_range_days: 1
+  forbidden_keywords:
+    - "drop"
+    - "delete"
+    - "truncate"
+    - "alter"
+    - "grant"
+  required_date_filters:
+    - "revenue"
+    - "daily_revenue"
+    - "active_users"
+    - "total_orders"
+    - "average_order_value"

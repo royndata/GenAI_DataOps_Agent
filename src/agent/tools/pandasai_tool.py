@@ -11,7 +11,6 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 import pandas as pd
 from pandasai import SmartDataframe
-from pandasai.llm import OpenAI
 
 from agent.knowledge.dataset_loader import load_dataset
 from agent.logging_config import logger
@@ -98,12 +97,8 @@ class PandasAITool:
     def __init__(self, settings: Settings, chart_output_dir: Optional[Union[str, Path]] = None):
         self._validate_api_key(settings.openai_api_key)
 
-        self.llm = OpenAI(
-            api_token=settings.openai_api_key,
-            temperature=0.1,
-            max_tokens=2000,
-        )
-
+        # Store API key - SmartDataframe will use it directly in v3.x
+        self.openai_api_key = settings.openai_api_key
         self.settings = settings
         self._cache: Dict[str, pd.DataFrame] = {}
 
@@ -220,7 +215,10 @@ class PandasAITool:
             smart_df = SmartDataframe(
                 df,
                 config={
-                    "llm": self.llm,
+                    "llm": "openai",
+                    "api_key": self.openai_api_key,
+                    "temperature": 0.1,
+                    "max_tokens": 2000,
                     "verbose": False,
                     "save_charts": chart_path is not None,
                     "save_charts_path": str(chart_path.parent) if chart_path else None,
@@ -284,3 +282,32 @@ class PandasAITool:
                 "result": None,
                 "execution_time_ms": execution_time_ms,
             }
+
+    def clear_cache(self) -> None:
+        """Clear dataset cache to free memory."""
+        self._cache.clear()
+        logger.info("pandasai_cache_cleared")
+
+    def get_dataset_info(self, filename: str) -> Dict[str, Any]:
+        """
+        Get metadata about a dataset without loading it fully.
+        
+        Args:
+            filename: Dataset filename
+            
+        Returns:
+            Dict with dataset metadata
+        """
+        try:
+            df = self._load_or_cache_dataset(filename)
+            return {
+                "filename": filename,
+                "rows": len(df),
+                "columns": list(df.columns),
+                "column_types": {col: str(dtype) for col, dtype in df.dtypes.items()},
+                "memory_usage_mb": round(df.memory_usage(deep=True).sum() / (1024 * 1024), 2),
+                "cached": filename in self._cache
+            }
+        except Exception as e:
+            logger.error("pandasai_dataset_info_failed", filename=filename, error=str(e))
+            raise

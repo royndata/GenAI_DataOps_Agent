@@ -7,8 +7,10 @@ Slack listener for the GenAI DataOps Agent.
 Enhancements included:
 - Input sanitization (remove @bot mentions)
 - Input validation (length check, empty check)
+- Input guardrails integration (comprehensive validation before routing)
 - Router-level rate limiting support
 - Socket Mode operation
+- Output guardrails and formatter integration
 - Safe chart uploads
 - Clean structured logging
 """
@@ -28,6 +30,9 @@ from agent.knowledge.database import Database
 from agent.tools.sql_tool import SQLTool
 from agent.tools.pandasai_tool import PandasAITool
 from agent.cognition.router import Router
+from agent.ingestion.input_guardrails import InputGuardrails
+from agent.output.output_guardrails import OutputGuardrails
+from agent.output.output_formatter import OutputFormatter
 
 
 class SlackListener:
@@ -42,7 +47,14 @@ class SlackListener:
         db = Database(self.settings)
         self.sql_tool = SQLTool(db=db)
         self.pandas_tool = PandasAITool(settings=settings)
-        self.router = Router(self.sql_tool, self.pandas_tool)
+        self.router = Router(self.sql_tool, self.pandas_tool, database=db, settings=settings)
+
+        # Initialize input guardrails (with semantic loader for metric validation)
+        self.input_guardrails = InputGuardrails(semantic_loader=self.router.semantic_loader)
+
+        # Initialize output guardrails and formatter
+        self.output_guardrails = OutputGuardrails()
+        self.output_formatter = OutputFormatter()
 
         logger.info("slack_listener_tools_initialized")
 
@@ -91,33 +103,57 @@ class SlackListener:
                 raw_text = event.get("text", "")
 
                 text = self._sanitize_input(raw_text)
+                
+                # Basic validation first
                 is_valid, err = self._validate_input(text)
                 if not is_valid:
                     say(err)
                     logger.warning("invalid_input", user=user, error=err)
                     return
 
+                # Comprehensive input guardrails validation
+                guardrails_valid, guardrails_error, _ = self.input_guardrails.validate(text)
+                if not guardrails_valid:
+                    say(guardrails_error or "Input validation failed.")
+                    logger.warning("input_guardrails_failed", user=user, error=guardrails_error)
+                    return
+
                 # Router call
                 response = self.router.route(text, user_id=user)
 
-                # Send main response with truncation if needed
-                message = response.get("message", "Processing...")
-                if len(message) > 4000:
-                    message = message[:3900] + "\n... (truncated)"
-                    logger.warning("slack_message_truncated", original_length=len(response.get("message", "")))
+                # Validate output with guardrails
+                output_valid, output_error, sanitized_response = self.output_guardrails.validate_router_response(response)
+                if not output_valid:
+                    # If output validation fails, send safe error message
+                    safe_message = f"⚠️ Output validation failed: {output_error or 'Invalid response format'}"
+                    say(safe_message)
+                    logger.error("output_guardrails_failed", user=user, error=output_error)
+                    return
 
-                say(message)
+                # Format response for Slack
+                formatted_message = self.output_formatter.format_router_response(sanitized_response)
 
-                # Upload chart if available
-                if response.get("chart_path"):
+                # Final validation of formatted message
+                final_valid, final_error = self.output_guardrails.validate_formatted_message(formatted_message)
+                if not final_valid:
+                    safe_message = f"⚠️ Message formatting issue: {final_error or 'Invalid format'}"
+                    say(safe_message)
+                    logger.error("output_format_validation_failed", user=user, error=final_error)
+                    return
+
+                # Send formatted message
+                say(formatted_message)
+
+                # Upload chart if available (chart path already validated by output guardrails)
+                if sanitized_response.get("chart_path"):
                     try:
-                        with open(response["chart_path"], "rb") as f:
+                        with open(sanitized_response["chart_path"], "rb") as f:
                             app.client.files_upload(
                                 channels=event["channel"],
                                 file=f,
                                 title="Analysis Chart"
                             )
-                        logger.info("chart_uploaded", chart=response["chart_path"])
+                        logger.info("chart_uploaded", chart=sanitized_response["chart_path"])
                     except Exception as e:
                         logger.error("chart_upload_failed", error=str(e))
 
@@ -143,32 +179,57 @@ class SlackListener:
                 raw_text = event.get("text", "")
 
                 text = self._sanitize_input(raw_text)
+                
+                # Basic validation first
                 is_valid, err = self._validate_input(text)
                 if not is_valid:
                     say(err)
                     logger.warning("invalid_input", user=user, error=err)
                     return
 
+                # Comprehensive input guardrails validation
+                guardrails_valid, guardrails_error, _ = self.input_guardrails.validate(text)
+                if not guardrails_valid:
+                    say(guardrails_error or "Input validation failed.")
+                    logger.warning("input_guardrails_failed", user=user, error=guardrails_error)
+                    return
+
                 # Router call
                 response = self.router.route(text, user_id=user)
 
-                # Send main response with truncation if needed
-                message = response.get("message", "Processing...")
-                if len(message) > 4000:
-                    message = message[:3900] + "\n... (truncated)"
-                    logger.warning("slack_message_truncated", original_length=len(response.get("message", "")))
+                # Validate output with guardrails
+                output_valid, output_error, sanitized_response = self.output_guardrails.validate_router_response(response)
+                if not output_valid:
+                    # If output validation fails, send safe error message
+                    safe_message = f"⚠️ Output validation failed: {output_error or 'Invalid response format'}"
+                    say(safe_message)
+                    logger.error("output_guardrails_failed", user=user, error=output_error)
+                    return
 
-                say(message)
+                # Format response for Slack
+                formatted_message = self.output_formatter.format_router_response(sanitized_response)
 
-                if response.get("chart_path"):
+                # Final validation of formatted message
+                final_valid, final_error = self.output_guardrails.validate_formatted_message(formatted_message)
+                if not final_valid:
+                    safe_message = f"⚠️ Message formatting issue: {final_error or 'Invalid format'}"
+                    say(safe_message)
+                    logger.error("output_format_validation_failed", user=user, error=final_error)
+                    return
+
+                # Send formatted message
+                say(formatted_message)
+
+                # Upload chart if available (chart path already validated by output guardrails)
+                if sanitized_response.get("chart_path"):
                     try:
-                        with open(response["chart_path"], "rb") as f:
+                        with open(sanitized_response["chart_path"], "file=f"):
                             app.client.files_upload(
                                 channels=event["channel"],
                                 file=f,
                                 title="Analysis Chart"
                             )
-                        logger.info("chart_uploaded", chart=response["chart_path"])
+                        logger.info("chart_uploaded", chart=sanitized_response["chart_path"])
                     except Exception as e:
                         logger.error("chart_upload_failed", error=str(e))
 
