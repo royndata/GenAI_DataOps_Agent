@@ -22,14 +22,21 @@ import time
 from agent.config import Settings
 from agent.logging_config import logger
 
+# Optional PromptManager import (graceful degradation)
+try:
+    from agent.knowledge.prompt_manager import PromptManager
+    PROMPT_MANAGER_AVAILABLE = True
+except ImportError:
+    PROMPT_MANAGER_AVAILABLE = False
+    PromptManager = None
+
 # Optional OpenAI import (graceful degradation)
 try:
-    import openai
+    from openai import OpenAI
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
-    openai = None
-
+    OpenAI = None
 
 class LLMReasoner:
     """
@@ -61,13 +68,22 @@ class LLMReasoner:
         self.model = model
         self.enabled = True
         
-        # Initialize OpenAI client
+        # Initialize OpenAI client (v1.0.0+ API)
         try:
-            openai.api_key = settings.openai_api_key
+            self.client = OpenAI(api_key=settings.openai_api_key)
             logger.info("llm_reasoner_initialized", model=model)
         except Exception as e:
             logger.error("llm_reasoner_init_failed", error=str(e))
             self.enabled = False
+        
+        # Initialize PromptManager (optional)
+        self.prompt_manager = None
+        if PROMPT_MANAGER_AVAILABLE:
+            try:
+                self.prompt_manager = PromptManager()
+                logger.info("llm_reasoner_prompt_manager_initialized")
+            except Exception as e:
+                logger.warning("llm_reasoner_prompt_manager_init_failed", error=str(e))
 
     def interpret_intent(
         self,
@@ -196,6 +212,23 @@ class LLMReasoner:
         context: Optional[Dict[str, Any]]
     ) -> str:
         """Build prompt for intent interpretation."""
+
+        # Use PromptManager if available
+        if self.prompt_manager:
+            try:
+                return self.prompt_manager.build_intent_interpretation_prompt(
+                    query=query,
+                    tools=tools,
+                    context=context
+                )
+            except AttributeError:
+                # Method doesn't exist in PromptManager, use fallback
+                logger.warning("llm_reasoner_prompt_manager_method_not_found", method="build_intent_interpretation_prompt")
+            except Exception as e:
+                logger.warning("llm_reasoner_prompt_manager_error", error=str(e))
+        
+        # Fallback to original prompt
+
         context_str = ""
         if context:
             context_str = f"\nContext: {json.dumps(context, indent=2)}"
@@ -227,6 +260,21 @@ Respond in JSON format:
         context: Optional[Dict[str, Any]]
     ) -> str:
         """Build prompt for task decomposition."""
+        # Use PromptManager if available
+        if self.prompt_manager:
+            try:
+                return self.prompt_manager.build_task_decomposition_prompt(
+                    query=query,
+                    tool=target_tool,
+                    context=context
+                )
+            except AttributeError:
+                # Method doesn't exist in PromptManager, use fallback
+                logger.warning("llm_reasoner_prompt_manager_method_not_found", method="build_task_decomposition_prompt")
+            except Exception as e:
+                logger.warning("llm_reasoner_prompt_manager_error", error=str(e))
+        
+        # Fallback to original prompt
         context_str = ""
         if context:
             context_str = f"\nContext: {json.dumps(context, indent=2)}"
@@ -259,7 +307,7 @@ Respond in JSON format with array of tasks:
             LLM response text
         """
         try:
-            response = openai.ChatCompletion.create(
+            response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": "You are a data analytics assistant. Respond only with valid JSON."},
@@ -333,3 +381,112 @@ Respond in JSON format with array of tasks:
         except Exception as e:
             logger.warning("llm_reasoner_decomposition_parse_failed", error=str(e), response_preview=response[:100])
             return []
+    
+    def classify_query_type(
+        self,
+        query: str,
+        schema: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Classify query type for enhanced SQL generation.
+        
+        Args:
+            query: User query text
+            schema: Optional database schema info
+            
+        Returns:
+            Dict with keys: query_type, complexity, requires_joins, requires_window_functions, etc.
+        """
+        if not self.enabled:
+            return {
+                "query_type": "simple",
+                "complexity": "low",
+                "requires_joins": False,
+                "requires_window_functions": False,
+                "requires_subqueries": False
+            }
+        
+        try:
+            # Use PromptManager if available
+            if self.prompt_manager and schema:
+                try:
+                    prompt = self.prompt_manager.build_query_complexity_prompt(query, schema)
+                except AttributeError:
+                    # Method doesn't exist in PromptManager, use fallback
+                    logger.warning("llm_reasoner_prompt_manager_method_not_found", method="build_query_complexity_prompt")
+                    prompt = None
+                except Exception as e:
+                    logger.warning("llm_reasoner_prompt_manager_error", error=str(e))
+                    prompt = None
+            else:
+                prompt = None
+            
+            if not prompt:
+                # Fallback prompt
+                schema_str = ""
+                if schema:
+                    schema_str = f"\nDatabase Schema:\n{json.dumps(schema, indent=2)}"
+                
+                prompt = f"""Classify this SQL query request by type and complexity.
+
+Query: {query}{schema_str}
+
+Classify into one of:
+- simple: Basic SELECT with aggregation
+- multi_table: Requires JOINs across multiple tables
+- time_series: Requires GROUP BY date/time
+- ranking: Requires window functions (ROW_NUMBER, RANK, etc.)
+- conditional: Requires CASE statements
+- subquery: Requires nested queries
+
+Respond in JSON:
+{{
+    "query_type": "simple|multi_table|time_series|ranking|conditional|subquery",
+    "complexity": "low|medium|high",
+    "requires_joins": true/false,
+    "requires_window_functions": true/false,
+    "requires_subqueries": true/false,
+    "requires_case_statements": true/false,
+    "reasoning": "brief explanation"
+}}"""
+            
+            response = self._call_llm(prompt)
+            
+            # Parse JSON
+            if "```json" in response:
+                json_start = response.find("```json") + 7
+                json_end = response.find("```", json_start)
+                response = response[json_start:json_end].strip()
+            elif "```" in response:
+                json_start = response.find("```") + 3
+                json_end = response.find("```", json_start)
+                response = response[json_start:json_end].strip()
+            
+            # Extract JSON object
+            json_start = response.find("{")
+            if json_start != -1:
+                brace_count = 0
+                json_end = -1
+                for i in range(json_start, len(response)):
+                    if response[i] == "{":
+                        brace_count += 1
+                    elif response[i] == "}":
+                        brace_count -= 1
+                        if brace_count == 0:
+                            json_end = i + 1
+                            break
+                if json_end != -1:
+                    response = response[json_start:json_end].strip()
+            
+            result = json.loads(response)
+            return result
+            
+        except Exception as e:
+            logger.warning("llm_reasoner_query_classification_failed", error=str(e))
+            return {
+                "query_type": "simple",
+                "complexity": "low",
+                "requires_joins": False,
+                "requires_window_functions": False,
+                "requires_subqueries": False
+            }

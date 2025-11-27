@@ -47,14 +47,22 @@ class SlackListener:
         db = Database(self.settings)
         self.sql_tool = SQLTool(db=db)
         self.pandas_tool = PandasAITool(settings=settings)
-        self.router = Router(self.sql_tool, self.pandas_tool, database=db, settings=settings)
+        
+        # Initialize output guardrails and formatter FIRST (needed by router)
+        self.output_guardrails = OutputGuardrails()
+        self.output_formatter = OutputFormatter()
+        
+        # Initialize router with output_formatter
+        self.router = Router(
+            self.sql_tool, 
+            self.pandas_tool, 
+            database=db, 
+            settings=settings,
+            output_formatter=self.output_formatter  # Add this
+        )
 
         # Initialize input guardrails (with semantic loader for metric validation)
         self.input_guardrails = InputGuardrails(semantic_loader=self.router.semantic_loader)
-
-        # Initialize output guardrails and formatter
-        self.output_guardrails = OutputGuardrails()
-        self.output_formatter = OutputFormatter()
 
         logger.info("slack_listener_tools_initialized")
 

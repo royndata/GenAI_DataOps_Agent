@@ -41,7 +41,7 @@ metric_patterns:
       - "total"
       - "value"
     aggregation: "SUM"
-    requires_date_filter: true
+    date_filter_suggested: true  # ← Suggests date filter if user asks about time, but doesn't force it  
     routing_hint: "sql"
     keywords: ["revenue", "sales", "income", "money", "earnings"]
     sql_template: "SELECT SUM({column}) as revenue FROM {table} WHERE {date_filter}"
@@ -64,7 +64,7 @@ metric_patterns:
       - "order_date"
     aggregation: "SUM"
     group_by: "DATE({date_column})"
-    requires_date_filter: true
+    date_filter_suggested: true
     routing_hint: "sql"
     keywords: ["daily revenue", "revenue by day", "daily sales"]
     sql_template: "SELECT DATE({date_column}) as date, SUM({column}) as revenue FROM {table} WHERE {date_filter} GROUP BY DATE({date_column}) ORDER BY date DESC"
@@ -83,7 +83,7 @@ metric_patterns:
       - "account_id"
       - "customer_id"
     aggregation: "COUNT DISTINCT"
-    requires_date_filter: true
+    date_filter_suggested: true
     routing_hint: "sql"
     keywords: ["active users", "dau", "daily active users", "users", "unique users"]
     sql_template: "SELECT COUNT(DISTINCT {column}) as active_users FROM {table} WHERE {date_filter}"
@@ -100,7 +100,7 @@ metric_patterns:
       - "order_id"
       - "id"
     aggregation: "COUNT"
-    requires_date_filter: true
+    date_filter_suggested: true
     routing_hint: "sql"
     keywords: ["orders", "order count", "total orders"]
     sql_template: "SELECT COUNT(*) as total_orders FROM {table} WHERE {date_filter}"
@@ -117,7 +117,7 @@ metric_patterns:
       - "price"
       - "value"
     aggregation: "AVG"
-    requires_date_filter: true
+    date_filter_suggested: true
     routing_hint: "sql"
     keywords: ["aov", "average order", "order value", "avg order"]
     sql_template: "SELECT AVG({column}) as avg_order_value FROM {table} WHERE {date_filter}"

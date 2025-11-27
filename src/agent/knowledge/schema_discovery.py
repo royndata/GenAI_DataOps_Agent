@@ -68,18 +68,18 @@ class SchemaDiscovery:
             List of column metadata dicts with keys: name, type, nullable
         """
         try:
-            query = text("""
+            # Use string formatting for table name (safe since it's from schema discovery)
+            query_str = f"""
                 SELECT 
                     column_name,
                     data_type,
                     is_nullable
                 FROM information_schema.columns
                 WHERE table_schema = 'public' 
-                AND table_name = :table_name
+                AND table_name = '{table_name}'
                 ORDER BY ordinal_position
-            """)
-            
-            results = self.database.run_query(query, params={"table_name": table_name})
+            """
+            results = self.database.run_query(text(query_str))
             
             columns = [
                 {

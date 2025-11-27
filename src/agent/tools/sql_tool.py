@@ -70,6 +70,78 @@ class SQLTool:
             "estimated_complexity": "high" if q_lower.count("select") > 2 else "medium" if "join" in q_lower else "low"
         }
 
+    def _normalize_sql(self, query: str) -> str:
+        """
+        Normalize SQL query to ensure SQLAlchemy compatibility.
+        Fixes common syntax issues from LLM-generated or user-provided SQL.
+        
+        Args:
+            query: Raw SQL query string
+            
+        Returns:
+            Normalized SQL query string
+        """
+        import re
+        import html
+        
+        normalized = query.strip()
+        
+        # FIRST: Fix HTML encoding if present (e.g., &gt; -> >)
+        try:
+            normalized = html.unescape(normalized)
+        except Exception:
+            pass  # If unescaping fails, continue with original
+        
+        # SECOND: Fix common LLM/user errors: restore missing asterisks IMMEDIATELY
+        # This must happen FIRST before any other normalization
+        
+        # Fix COUNT() -> COUNT(*) (handle various spacing patterns)
+        # Matches: COUNT(), COUNT( ), COUNT ( ), COUNT(), etc.
+        normalized = re.sub(r'\bCOUNT\s*\(\s*\)', 'COUNT(*)', normalized, flags=re.IGNORECASE)
+        
+        # Fix SELECT FROM -> SELECT * FROM (handle various spacing and contexts)
+        # Matches: SELECT FROM, SELECT  FROM, SELECT\nFROM, etc.
+        # Works in CTEs, subqueries, and main queries
+        normalized = re.sub(r'\bSELECT\s+FROM\b', 'SELECT * FROM', normalized, flags=re.IGNORECASE)
+        
+        # Also fix SELECT DISTINCT FROM -> SELECT DISTINCT * FROM
+        normalized = re.sub(r'\bSELECT\s+DISTINCT\s+FROM\b', 'SELECT DISTINCT * FROM', normalized, flags=re.IGNORECASE)
+        
+        # Fix COUNT DISTINCT syntax: COUNT DISTINCT(column) -> COUNT(DISTINCT column)
+        # Pattern: COUNT DISTINCT(column) or COUNT DISTINCT (column)
+        normalized = re.sub(
+            r'COUNT\s+DISTINCT\s*\(([^)]+)\)',
+            r'COUNT(DISTINCT \1)',
+            normalized,
+            flags=re.IGNORECASE
+        )
+        
+        # Fix date literals in WHERE clauses for SQLAlchemy compatibility
+        # Ensure date strings are properly quoted and formatted
+        # Pattern: WHERE column >= 'YYYY-MM-DD' or WHERE column >= CURRENT_DATE - INTERVAL
+        # SQLAlchemy text() should handle these, but ensure proper spacing
+        normalized = re.sub(
+            r"(\w+)\s*>=\s*'(\d{4}-\d{2}-\d{2})'",
+            r"\1 >= '\2'",
+            normalized,
+            flags=re.IGNORECASE
+        )
+        
+        # Normalize CTE formatting (ensure proper spacing)
+        # Pattern: WITH name AS (SELECT...) -> ensure proper formatting
+        normalized = re.sub(
+            r'WITH\s+(\w+)\s+AS\s*\(',
+            r'WITH \1 AS (',
+            normalized,
+            flags=re.IGNORECASE
+        )
+        
+        # Normalize spacing more carefully - preserve COUNT(*) and SELECT *
+        # Only normalize excessive spaces, don't add spaces around parentheses in function calls
+        normalized = re.sub(r'\s{2,}', ' ', normalized)  # Multiple spaces to single (but preserve single spaces)
+        
+        return normalized.strip()
+
     def run_safe_query(
         self, 
         query: str, 
@@ -91,6 +163,9 @@ class SQLTool:
         start_time = time.time()
         timeout_seconds = timeout or QUERY_TIMEOUT_SECONDS
 
+        # Normalize SQL before validation
+        query = self._normalize_sql(query)
+        
         self._validate_query(query)
         complexity = self._analyze_complexity(query)
 
@@ -119,18 +194,35 @@ class SQLTool:
                 rows = rows[:MAX_ROWS]
                 row_count = MAX_ROWS
 
+            # Convert SQLAlchemy Row objects to tuples for consistent handling
+            # SQLAlchemy Row objects are tuple-like but not actual tuples
+            converted_rows = []
+            for row in rows:
+                if hasattr(row, '_fields'):
+                    # SQLAlchemy Row object - convert to tuple
+                    converted_rows.append(tuple(row))
+                elif isinstance(row, (tuple, list)):
+                    # Already a tuple/list
+                    converted_rows.append(tuple(row))
+                elif isinstance(row, dict):
+                    # Dict - convert to tuple of values
+                    converted_rows.append(tuple(row.values()))
+                else:
+                    # Fallback: wrap in tuple
+                    converted_rows.append((row,))
+
             # Get column names if available (from first row structure)
             columns = []
-            if rows:
+            if converted_rows:
                 # Try to get column names from result keys if available
-                if hasattr(rows[0], '_fields'):
+                if rows and hasattr(rows[0], '_fields'):
                     columns = list(rows[0]._fields)
-                elif isinstance(rows[0], dict):
+                elif rows and isinstance(rows[0], dict):
                     columns = list(rows[0].keys())
-                elif isinstance(rows[0], tuple):
+                elif rows and isinstance(rows[0], tuple):
                     # For tuples, we don't have column names from DB
                     # This would need to be enhanced if database.run_query returns ResultProxy
-                    columns = [f"column_{i+1}" for i in range(len(rows[0]))]
+                    columns = [f"column_{i+1}" for i in range(len(converted_rows[0]))]
 
             logger.info(
                 "sql_query_success",
@@ -140,12 +232,12 @@ class SQLTool:
             )
 
             return {
-                "rows": rows,
+                "rows": converted_rows,  # Use converted rows
                 "columns": columns,
                 "row_count": row_count,
                 "execution_time_ms": round(execution_time, 2),
                 "complexity": complexity,
-                "truncated": len(rows) < row_count if row_count > MAX_ROWS else False
+                "truncated": len(converted_rows) < row_count if row_count > MAX_ROWS else False
             }
 
         except TimeoutError as e:

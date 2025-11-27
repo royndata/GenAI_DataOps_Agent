@@ -333,3 +333,43 @@ class Memory:
             "short_term_ttl_seconds": self.short_term_ttl,
             "long_term_max_entries": self.long_term_max_entries
         }
+
+    def set_pending_confirmation(self, user_id: str, confirmation_data: Dict[str, Any]) -> None:
+        """
+        Store pending confirmation request for user.
+        
+        Args:
+            user_id: User identifier
+            confirmation_data: Dict with metric/query details
+        """
+        if not hasattr(self, "_pending_confirmations"):
+            self._pending_confirmations = {}
+        
+        self._pending_confirmations[user_id] = confirmation_data
+        logger.info("memory_pending_confirmation_set", user_id=user_id)
+
+    def get_pending_confirmation(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get pending confirmation for user.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            Confirmation data dict or None
+        """
+        if not hasattr(self, "_pending_confirmations"):
+            return None
+        
+        return self._pending_confirmations.get(user_id)
+
+    def clear_pending_confirmation(self, user_id: str) -> None:
+        """
+        Clear pending confirmation for user.
+        
+        Args:
+            user_id: User identifier
+        """
+        if hasattr(self, "_pending_confirmations"):
+            self._pending_confirmations.pop(user_id, None)
+            logger.info("memory_pending_confirmation_cleared", user_id=user_id)

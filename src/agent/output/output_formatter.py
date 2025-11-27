@@ -16,6 +16,7 @@ Follows AGENTS.md rules: Output module never touches DB.
 
 from typing import Any, Dict, List, Optional, Tuple
 from agent.logging_config import logger
+from decimal import Decimal
 
 
 # Slack formatting constants
@@ -59,8 +60,11 @@ class OutputFormatter:
         message = response.get("message", "✅ Completed")
         
         # Add raw data formatting if available and message is short
+        # Skip if message already contains a table (to avoid duplicates)
         raw = response.get("raw")
-        if raw and len(message) < 2000:
+        # Check if table already exists: look for "Results:" header or markdown table pattern
+        has_table = "*Results:*" in message or ("```\n|" in message and "|" in message and "---" in message)
+        if raw and len(message) < 2000 and not has_table:
             formatted_raw = self._format_raw_data(raw)
             if formatted_raw:
                 message += f"\n\n{formatted_raw}"
@@ -200,16 +204,76 @@ class OutputFormatter:
     # Internal Formatting Helpers
     # ------------------------------------------------------
 
+    def _format_table_value(self, value: Any) -> str:
+        """
+        Format a single table cell value for display.
+        Converts Decimal to integer, handles tuples.
+        
+        Args:
+            value: Cell value (can be Decimal, tuple, etc.)
+            
+        Returns:
+            Formatted string value
+        """
+        # Handle Decimal values - convert to int if whole number
+        if isinstance(value, Decimal):
+            # Convert to int if it's a whole number, otherwise keep as float
+            if value == value.to_integral_value():
+                return str(int(value))
+            else:
+                return str(float(value))
+        
+        # Handle tuples - extract values and format recursively
+        if isinstance(value, tuple):
+            formatted_items = [self._format_table_value(item) for item in value]
+            return ", ".join(formatted_items)
+        
+        # Default: convert to string
+        return str(value)
+    
+    def _detect_currency_and_format_column(self, column_name: str) -> str:
+        """
+        Detect currency from column name and format column header.
+        
+        Args:
+            column_name: Original column name
+            
+        Returns:
+            Formatted column name with currency if detected
+        """
+        column_lower = column_name.lower()
+        
+        # Check if column is payment-related
+        is_payment = any(keyword in column_lower for keyword in ["payment", "pay", "payments", "amount", "revenue", "price", "cost"])
+        
+        if is_payment:
+            # Try to extract currency from column name
+            currency = None
+            if "usd" in column_lower:
+                currency = "USD"
+            elif "inr" in column_lower or "rupee" in column_lower:
+                currency = "INR"
+            elif "eur" in column_lower or "euro" in column_lower:
+                currency = "EUR"
+            elif "gbp" in column_lower or "pound" in column_lower:
+                currency = "GBP"
+            
+            # Add currency to column name if found
+            if currency:
+                return f"{column_name} ({currency})"
+        
+        return column_name
+
     def _format_table(self, rows: List[Any], columns: Optional[List[str]] = None) -> str:
         """
-        Format rows into a text table.
+        Format rows into a markdown-style table for better Slack display.
         
         Args:
             rows: List of row data (tuples or dicts)
             columns: Optional column names
             
         Returns:
-            Formatted table string, or empty if too large
+            Formatted markdown table string, or empty if too large
         """
         if not rows:
             return ""
@@ -218,15 +282,15 @@ class OutputFormatter:
         display_rows = rows[:MAX_TABLE_ROWS_DISPLAY]
         is_truncated = len(rows) > MAX_TABLE_ROWS_DISPLAY
 
-        # Convert rows to list of lists
+        # Convert rows to list of lists with formatted values
         table_data = []
         for row in display_rows:
             if isinstance(row, dict):
-                values = list(row.values())
+                values = [self._format_table_value(v) for v in list(row.values())]
             elif isinstance(row, tuple):
-                values = list(row)
+                values = [self._format_table_value(v) for v in row]
             else:
-                values = [str(row)]
+                values = [self._format_table_value(row)]
 
             # Limit columns
             if columns and len(values) > MAX_TABLE_COLUMNS_DISPLAY:
@@ -236,44 +300,49 @@ class OutputFormatter:
         if not table_data:
             return ""
 
-        # Get column names
+        # Get column names and format with currency if applicable
         if not columns:
             columns = [f"col_{i+1}" for i in range(len(table_data[0]))]
         else:
             columns = columns[:MAX_TABLE_COLUMNS_DISPLAY]
+            # Format column names with currency detection
+            columns = [self._detect_currency_and_format_column(col) for col in columns]
 
-        # Calculate column widths
-        col_widths = [len(str(col)) for col in columns]
+        # Calculate column widths (with padding)
+        col_widths = [max(len(str(col)), 10) for col in columns]  # Min width 10
         for row in table_data:
             for i, val in enumerate(row):
                 if i < len(col_widths):
-                    col_widths[i] = max(col_widths[i], len(str(val)))
+                    col_widths[i] = max(col_widths[i], len(str(val)) + 2)  # Add padding
 
-        # Build table
+        # Build markdown-style table
         lines = []
         
-        # Header
-        header = " | ".join(str(col).ljust(col_widths[i]) for i, col in enumerate(columns))
+        # Header row
+        header = "| " + " | ".join(str(col).ljust(col_widths[i]) for i, col in enumerate(columns)) + " |"
         lines.append(header)
-        lines.append("-" * len(header))
-
-        # Rows
+        
+        # Separator row (markdown table format)
+        separator = "| " + " | ".join("-" * w for w in col_widths) + " |"
+        lines.append(separator)
+        
+        # Data rows
         for row in table_data:
-            row_str = " | ".join(
+            row_str = "| " + " | ".join(
                 str(val).ljust(col_widths[i]) if i < len(col_widths) else str(val)
                 for i, val in enumerate(row)
-            )
+            ) + " |"
             lines.append(row_str)
 
         # Truncation notice
         if is_truncated:
-            lines.append(f"\n... ({len(rows) - MAX_TABLE_ROWS_DISPLAY} more rows)")
+            lines.append(f"\n*... ({len(rows) - MAX_TABLE_ROWS_DISPLAY} more rows)*")
 
         table = "\n".join(lines)
         
         # Check if table is too large for Slack
         if len(table) > 2000:
-            return f"Table too large to display ({len(rows)} rows, {len(columns)} columns). Use SQL tool directly for full results."
+            return f"*Table too large to display ({len(rows)} rows, {len(columns)} columns). Use SQL tool directly for full results.*"
 
         return table
 
